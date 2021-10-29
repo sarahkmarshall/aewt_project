@@ -32,6 +32,8 @@ from requests import Request
 import shutil
 import shapefile as sf
 import subprocess
+from scipy.interpolate import interpn
+from scipy.interpolate import griddata
 import sys
 import shapely
 from shapely.geometry import Point
@@ -43,6 +45,7 @@ print('numpy version: {}'.format(np.__version__))
 print('matplotlib version: {}'.format(mpl.__version__))
 print('flopy version: {}'.format(flopy.__version__))
 print('pyproj version: {}'.format(pyproj.__version__))
+
 
 # GDAL 2.3.3, released 2018/12/14. Got this by typing into conda prompt: gdalinfo --version
 #=====DIRECTORIES==============================================================
@@ -213,6 +216,7 @@ contours_sa = contours_sa.drop(labels="geometry", axis=1)
 contours_sa.columns
 contours_sa = contours_sa.rename(columns={"contours_icpt":"geometry"})
 
+########################################
 fig, ax = plt.subplots()
 contours_sa.plot(ax=ax, color="k", alpha=0.5, linewidth=1)
 
@@ -224,7 +228,9 @@ plt.xlabel("Longitude")
 plt.ylabel("Latitude")
 # Save figure
 plt.savefig(os.path.join("figures", "cropped_contours"), dpi=300)
+#######################################
 
+######################################
 # Plot DEM with the contours
 
 fig1, ax1 = plt.subplots()
@@ -237,7 +243,7 @@ xmin, xmax = ax1.get_xlim()
 axes_extent = ax1.axis()
 
 plt.savefig(os.path.join("figures", "dem_with_contours"), dpi=300)
-
+######################################
 
 
 #------------------------------------------------------------------------------
@@ -323,21 +329,103 @@ riv_brn[riv_brn > 0] = 1
 
 plt.figure()
 plt.imshow(riv_brn, cmap='gist_stern', interpolation=None)
+plt.savefig(os.path.join("figures", "riv_raster"), dpi=300)
 
 #------------------------------------------------------------------------------
+n_elements = raster_wt.shape[0]*raster_wt.shape[1]
+
+# This is what I want to interpolate:
+raster_wt
+type(raster_wt)
+raster_wt.shape
+
+# Define a 3d np array based on this raster, i.e. change to [x, y, z] values 
+
+x = np.arange(0, ncols)
+y = np.arange(0, nrows)
+
+xi, yi = np.meshgrid(x, y) # , sparse=True
+
+print("number of rows: %i should be equal to y: %i" %(nrows, len(y)))
+print("number of cols: %i should be equal to x: %i" %(ncols, len(x)))
+
+# Find the points where the water table exists
+points_wt = (raster_wt).nonzero()   
+
+# Find the points where the water table doesn't exist
+points_no_wt = np.where(raster_wt == 0) 
+
+# Now find the values of the water table at each of these points
+values_wt = raster_wt[points_wt]
+
+# BUT I need to preserve the structure of the array
+
+# Now do an interpolation over every other point in the raster    
+
+raster_wt_interp = raster_wt.copy()
 
 
+# Get interpolated value for a point
+
+grid_wt_z0 = griddata(points_wt, values_wt, (xi, yi), method='nearest')
+grid_wt_z1 = griddata(points_wt, values_wt, (xi, yi), method='linear')
+grid_wt_z2 = griddata(points_wt, values_wt, (xi, yi), method='cubic')
+
+###########################################
+### Plot the results
+fig = plt.figure()
+
+ax1 = plt.subplot(2, 2, 1)
+contours_sa.plot(ax=ax1, column=contours_sa["height"], alpha=0.5, linewidth=1)
+ax1.set_xlim([xmin, xmax])
+ax1.set_ylim([ymin, ymax])
+ax1.text(139, -25, "Original contours")
 
 
+ax2 = plt.subplot(2, 2, 2)
+plt.imshow(np.flipud(grid_wt_z0.T), extent=(xmin,xmax,ymin,ymax), origin='lower')
+ax2.text(139, -25, "Nearest interp")
 
 
+ax3 = plt.subplot(2, 2, 3)
+plt.imshow(np.flipud(grid_wt_z1.T), extent=(xmin,xmax,ymin,ymax), origin='lower')
+ax3.text(139, -25, "Linear interp")
 
 
+ax4 = plt.subplot(2, 2, 4)
+plt.imshow(np.flipud(grid_wt_z2.T), extent=(xmin,xmax,ymin,ymax), origin='lower')
+ax4.text(139, -25, "Cubic interp")
+
+plt.savefig(os.path.join("figures", "wt_interps"), dpi=300)
+###########################################
+
+###########################################
+### Exactly the same plot but with contours
+fig = plt.figure()
+
+ax1 = plt.subplot(2, 2, 1)
+contours_sa.plot(ax=ax1, column=contours_sa["height"], alpha=0.5, linewidth=1)
+ax1.set_xlim([xmin, xmax])
+ax1.set_ylim([ymin, ymax])
+#ax1.text(139, -25, "Original contours")
 
 
+ax2 = plt.subplot(2, 2, 2)
+plt.imshow(np.flipud(grid_wt_z0.T), extent=(xmin,xmax,ymin,ymax), origin='lower')
+#ax2.text(139, -25, "Nearest interp")
+contours_sa.plot(ax=ax2, color='k', linewidth=1)
 
 
+ax3 = plt.subplot(2, 2, 3)
+plt.imshow(np.flipud(grid_wt_z1.T), extent=(xmin,xmax,ymin,ymax), origin='lower')
+contours_sa.plot(ax=ax3, color='k', linewidth=1)
+#ax3.text(139, -25, "Linear interp")
 
 
+ax4 = plt.subplot(2, 2, 4)
+plt.imshow(np.flipud(grid_wt_z2.T), extent=(xmin,xmax,ymin,ymax), origin='lower')
+contours_sa.plot(ax=ax4, color='k', linewidth=1)
+#ax4.text(139, -25, "Cubic interp")
 
-
+plt.savefig(os.path.join("figures", "wt_interps_cont"), dpi=300)
+###########################################
