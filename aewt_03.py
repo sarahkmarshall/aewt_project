@@ -441,7 +441,7 @@ wt_raster_optns = [grid_wt_z0,
                    grid_wt_z1,
                    grid_wt_z2]
 
-wt_raster_idx = 1
+wt_raster_idx = 0
 
 for wt_raster_idx in range(len(wt_raster_optns)):
     
@@ -537,6 +537,150 @@ for wt_raster_idx in range(len(wt_raster_optns)):
     
     plt.savefig(os.path.join("figures", "wt_dem_linearregr_z%i" %wt_raster_idx), dpi=300)
     ###########################################
+    
+    #------------------------------------------------------------------------------
+    # Calculating the gradient of the wter table map - to determine a flux
+    
+for wt_raster_idx in range(len(wt_raster_optns)):
+    
+    #choose wt raster to work with
+    wt_raster = wt_raster_optns[wt_raster_idx].T #grid_wt_z0.T
+    
+    print("Starting loop with wt raster: z%i" %wt_raster_idx)
+    
+    gradient_wt = np.gradient(wt_raster)  
+    
+    max_grad = max(abs(np.nanmax(gradient_wt[0])), abs(np.nanmax(gradient_wt[1])))
+    min_grad = min(np.nanmin(gradient_wt[0]), np.nanmin(gradient_wt[1]))
+    vvalue = max(abs(max_grad), abs(min_grad))
+    
+    ###########################################
+    # Plot the gradients as a map
+    plt.figure()
+    plt.suptitle("Gradients of wt: z%i" %wt_raster_idx)
+    ax1 = plt.subplot(1, 2, 1)
+    img1 = plt.imshow(gradient_wt[0], cmap="gist_ncar") # , vmin = vvalue, vmax=-vvalue, 
+    ax1.text(500, 500, "x direction")
+    cb1 = plt.colorbar(img1)  
+    ax2 = plt.subplot(1, 2, 2)
+    img2 = plt.imshow(gradient_wt[1], cmap="gist_ncar") # , vmin = vvalue, vmax=-vvalue
+    ax2.text(500, 500, "y direction")
+    cb2 = plt.colorbar(img2)  
+    ax1.axis("off")
+    ax2.axis("off")
+    
+    plt.savefig(os.path.join("figures", "wt_grad_z%i" %wt_raster_idx), dpi=300)
+    ###########################################
+    # there are lots of very low values, some larger values obscuring data
+    # Check out the data more with a histogram
+    
+    mask_x = ~np.isnan(gradient_wt[0].flatten())
+    mask_y = ~np.isnan(gradient_wt[1].flatten())
+    
+    ###########################################
+#    # Box plots of the gradients
+#    plt.figure()
+#    a = plt.boxplot(gradient_wt[0].flatten()[mask_x], vert=True)
+#    b = plt.boxplot(gradient_wt[1].flatten()[mask_y], vert=True)
+#    
+    ###########################################
+    # There are a lot of "outliers"
+    # Get the interquartlile range and just look at this
+    
+    iqr_x = stats.iqr(gradient_wt[0].flatten()[mask_x])
+    iqr_y = stats.iqr(gradient_wt[1].flatten()[mask_y])
+
+    p1 = 45
+    p2 = 55
+
+    pcile_1_x = np.percentile(gradient_wt[0].flatten()[mask_x], p1)
+    pcile_2_x = np.percentile(gradient_wt[0].flatten()[mask_x], p1)
+    
+    pcile_1_y = np.percentile(gradient_wt[1].flatten()[mask_y], p2)
+    pcile_2_y = np.percentile(gradient_wt[1].flatten()[mask_y], p2)
+    
+    ###########################################
+    plt.figure()
+    plt.suptitle("Histograms of wt gradients, x (b) & y(m) wt: z%i" %wt_raster_idx)
+    
+    ax1 = plt.subplot(2,1,1)
+    plt.hist(gradient_wt[0].flatten()[mask_x], 
+             density=True, range=(pcile_1_x, pcile_2_x),
+             bins=100, color="b")  # density=False would make counts
+    plt.ylabel('Probability')
+
+    ax2 = plt.subplot(2,1,2)
+    plt.hist(gradient_wt[1].flatten()[mask_y], 
+             density=True, range=(pcile_1_y, pcile_2_y),
+             bins=100, color="m")  # density=False would make counts
+    plt.ylabel('Probability')
+    plt.xlabel('Data')  
+    plt.savefig(os.path.join("figures", "wt_grad_hists_z%i" %wt_raster_idx), dpi=300)
+
+    ###########################################
+    # Re-plot the gradients as a map
+    plt.figure()
+    plt.suptitle("Gradients of wt (narrow range): z%i" %wt_raster_idx)
+    ax1 = plt.subplot(1, 2, 1)
+    img1 = plt.imshow(gradient_wt[0], cmap="gist_ncar", vmin=pcile_1_x, vmax=pcile_2_x) 
+    ax1.text(500, 500, "x direction")
+    cb1 = plt.colorbar(img1)  
+    ax2 = plt.subplot(1, 2, 2)
+    img2 = plt.imshow(gradient_wt[1], cmap="gist_ncar", vmin=pcile_1_y, vmax=pcile_2_y)
+    ax2.text(500, 500, "y direction")
+    cb2 = plt.colorbar(img2)  
+    ax1.axis("off")
+    ax2.axis("off")
+    
+    plt.savefig(os.path.join("figures", "wt_grad_narrow_z%i" %wt_raster_idx), dpi=300)
+    
+    ###########################################
+    # Trying to plot up flow lines
+    
+for wt_raster_idx in range(len(wt_raster_optns)):
+    
+    #choose wt raster to work with
+    wt_raster = wt_raster_optns[wt_raster_idx].T #grid_wt_z0.T
+    
+    print("Starting loop with wt raster: z%i" %wt_raster_idx)
+    
+    gradient_wt = np.gradient(wt_raster)      
+    # Get the x and y locations of the arrows
+    # xi, yi --> These are the locations of every cell. Do I want every cell?
+    len(xi)
+    
+    skipcells = 100
+    X = xi[::skipcells, ::skipcells]
+    Y = yi[::skipcells, ::skipcells]
+    
+    len(X)
+    
+    x_mult = 0.1
+    y_mult = 0.1
+    
+    U = x_mult*(gradient_wt[0][::skipcells, ::skipcells])
+    V = y_mult*(gradient_wt[1][::skipcells, ::skipcells])
+
+    X.shape
+    Y.shape
+    U.shape
+    V.shape 
+    type(U)
+    type(V)
+
+    ### 
+    plt.figure()
+    plt.suptitle("Quiver map from gradients, wt: z%i" %wt_raster_idx)
+    plt.imshow(wt_raster, alpha=0.5)
+
+    plt.quiver(X, Y, U, V, 
+               color='k', scale=5, headwidth=3,
+               headlength=2,headaxislength=2, width=0.0025)
+        
+    plt.savefig(os.path.join("figures", "wt_grad_quiver_z%i" 
+                             %wt_raster_idx), dpi=300)
+    ###########################################
+
 #------------------------------------------------------------------------------
 # Making comparisons between water table contours and the river network
 
@@ -561,4 +705,5 @@ for wt_raster_idx in range(len(wt_raster_optns)):
     
     print("Riv max: %2.2f, Water table max: %2.2f " %(np.nanmax(riv_raster), np.nanmax(wt_raster)))
     print("Riv min: %2.2f, Water table min: %2.2f " %(np.nanmin(riv_raster), np.nanmin(wt_raster)))
-  
+
+
