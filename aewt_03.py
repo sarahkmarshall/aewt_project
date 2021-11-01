@@ -7,7 +7,6 @@ Created on Tue Oct  5 10:08:19 2021
 Basing this script on my PhD -- Baby Hope "BH_05
 Using luk's jupyter notebook: https://ppts-bracewell-i1.hpc.csiro.au:9503/notebooks/Methodology/methodology/GKIS_Load_DataSets.ipynb#"
 """
-    
 import contextily
 import flopy
 from flopy.utils.reference import SpatialReference
@@ -34,6 +33,7 @@ import shapefile as sf
 import subprocess
 from scipy.interpolate import interpn
 from scipy.interpolate import griddata
+from scipy import stats
 import sys
 import shapely
 from shapely.geometry import Point
@@ -234,7 +234,7 @@ plt.savefig(os.path.join("figures", "cropped_contours"), dpi=300)
 # Plot DEM with the contours
 
 fig1, ax1 = plt.subplots()
-show(dem_projected, ax=ax1, alpha=0.5)
+show(dem_projected, ax=ax1, cmap="terrain", alpha=0.5)
 contours_sa.plot(ax=ax1, color="k", alpha=0.5, linewidth=1)
 plt.xlabel("Longitude")
 plt.ylabel("Latitude")
@@ -341,8 +341,9 @@ raster_wt.shape
 
 # Define a 3d np array based on this raster, i.e. change to [x, y, z] values 
 
-x = np.arange(0, ncols)
-y = np.arange(0, nrows)
+#### ! Double check these are the right way around
+x = np.arange(0, nrows)
+y = np.arange(0, ncols)
 
 xi, yi = np.meshgrid(x, y) # , sparse=True
 
@@ -429,3 +430,135 @@ contours_sa.plot(ax=ax4, color='k', linewidth=1)
 
 plt.savefig(os.path.join("figures", "wt_interps_cont"), dpi=300)
 ###########################################
+
+#------------------------------------------------------------------------------
+# Making comparisons between water table contours and the DEM
+
+# But are they in different formats? One has lat long one has grid based
+# Start with just comparing to z0 then add in others
+
+wt_raster_optns = [grid_wt_z0,
+                   grid_wt_z1,
+                   grid_wt_z2]
+
+wt_raster_idx = 1
+
+for wt_raster_idx in range(len(wt_raster_optns)):
+    
+    #choose wt raster to work with
+    wt_raster = wt_raster_optns[wt_raster_idx].T #grid_wt_z0.T
+    
+    print("Starting loop with wt raster: z%i" %wt_raster_idx)
+    
+    print(type(dem))       # numpy.ndarray
+    print(type(wt_raster)) # numpy.ndarray
+    
+    print(dem.shape)
+    print(wt_raster.shape)
+    
+    print("DEM max: %2.2f, Water table max: %2.2f " %(np.nanmax(dem), np.nanmax(wt_raster)))
+    print("DEM min: %2.2f, Water table min: %2.2f " %(np.nanmin(dem), np.nanmin(wt_raster)))
+    print("DEM average: %2.2f, Water table average: %2.2f " %(np.nanmean(dem), np.nanmean(wt_raster)))
+    print("DEM st deviation: %2.2f, Water table st deviation: %2.2f " %(np.nanstd(dem), np.nanstd(wt_raster)))
+    
+    ###########################################
+    plt.figure()
+    ax1 = plt.subplot(2, 1, 1)
+    plt.imshow(wt_raster)
+    
+    ax2 = plt.subplot(2, 1, 2)
+    plt.imshow(dem, cmap="terrain", alpha=0.5)
+    plt.savefig(os.path.join("figures", "dem_vs_wt_raster_z%i"%wt_raster_idx), 
+                dpi=300)
+    ###########################################
+    
+    #-----------------------------------------------------------------------------
+    # Check if there are any places where the height of the DEM is below wt
+    
+    residual_dem_wt = dem - wt_raster
+    
+    print("Max of residuals: %2.2f" %np.nanmax(residual_dem_wt))
+    print("Min of residuals: %2.2f" %np.nanmin(residual_dem_wt))
+    print("Mean of residuals: %2.2f" %np.nanmean(residual_dem_wt))
+    print("Standard deviation of residuals: %2.2f" %np.nanstd(residual_dem_wt))
+    
+    max_diff = max(abs(np.nanmin(residual_dem_wt)), 
+                   abs(np.nanmax(residual_dem_wt)))
+    
+    ###########################################
+    plt.figure()
+    ax1 = plt.subplot(1, 1, 1)
+    img1 = plt.imshow(residual_dem_wt, cmap="PiYG", vmin=-max_diff, vmax=max_diff)
+    
+    cb1 = plt.colorbar(img1)  
+    cb1.set_label('DEM - wt (z%i) [m]' %wt_raster_idx)
+    
+    plt.savefig(os.path.join("figures", "diff_dem_wt_%i" %wt_raster_idx), dpi=300)
+    ###########################################
+    
+    # Places where residuals are < 0, i.e. the DEM is higher than the wt
+    
+    wt_abv_dem_idx = np.where(residual_dem_wt > 0) 
+    wt_abv_dem_values = residual_dem_wt[wt_abv_dem_idx] # This gets me the values
+    wt_abv_dem = residual_dem_wt > 0 # This shows results as a Boolean array
+    
+    ###########################################
+    plt.figure()
+    plt.suptitle("Is wt above DEM? wt: z%i" %wt_raster_idx)
+    ax1 = plt.subplot(1, 1, 1)
+    img1 = plt.imshow(wt_abv_dem, cmap="binary")
+    
+    plt.savefig(os.path.join("figures", "wt_abv_dem_z%i" %wt_raster_idx), dpi=300)
+    ###########################################
+
+#------------------------------------------------------------------------------  
+# Regression analysis between the elevation and the water table
+
+    # Flatten arrays
+    dem_flat        = dem.flatten()
+    wt_raster_flat  = wt_raster.flatten()
+    
+    dem_flat.shape
+    wt_raster_flat.shape
+    
+    # Create mask of locations with nans. ~ means "is not" (only in np)
+    mask = ~np.isnan(dem_flat) & ~np.isnan(wt_raster_flat)
+    
+    res = stats.linregress(dem_flat[mask], wt_raster_flat[mask])
+    res.slope    
+    r2 = (res.rvalue)**2
+    
+    ###########################################
+    plt.figure()
+    plt.plot(dem_flat, wt_raster_flat, 'o', label='dem vs wt: z%i' %wt_raster_idx)
+    plt.plot(dem_flat, res.intercept + res.slope*dem_flat, 'r', label='fitted line')
+    plt.legend()
+    plt.text(110, 70, "R2 = %2.2f" %r2)
+    
+    plt.savefig(os.path.join("figures", "wt_dem_linearregr_z%i" %wt_raster_idx), dpi=300)
+    ###########################################
+#------------------------------------------------------------------------------
+# Making comparisons between water table contours and the river network
+
+# River raster is just 1 where there is a river, 0 where there isn't one...
+# can I get stage data for the river and add to the raster?
+    
+riv_raster = riv_brn
+wt_raster_idx = 0
+
+for wt_raster_idx in range(len(wt_raster_optns)):
+    
+    #choose wt raster to work with 
+    wt_raster = wt_raster_optns[wt_raster_idx].T #grid_wt_z0.T
+    
+    print("Starting loop with wt raster: z%i" %wt_raster_idx)
+    
+    print(type(riv_raster))       # numpy.ndarray
+    print(type(wt_raster)) # numpy.ndarray
+    
+    print(riv_raster.shape)
+    print(wt_raster.shape)
+    
+    print("Riv max: %2.2f, Water table max: %2.2f " %(np.nanmax(riv_raster), np.nanmax(wt_raster)))
+    print("Riv min: %2.2f, Water table min: %2.2f " %(np.nanmin(riv_raster), np.nanmin(wt_raster)))
+  
