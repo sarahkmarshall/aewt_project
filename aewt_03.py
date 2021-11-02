@@ -109,7 +109,9 @@ dem.shape
 mask = np.zeros_like(dem)
 nrows,ncols = np.shape(mask)
 
-print("nrows: %s, ncols: %s" %(nrows,ncols))
+
+
+
 
 #------------------------------------------------------------------------------
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -166,6 +168,74 @@ sa_df = pd.DataFrame()
 sa_df["geometry"] = [studyarea]
 
 sa_gdf = gpd.GeoDataFrame(sa_df, geometry='geometry',crs=wgs84)
+
+# Convert to utm to get the size in metres
+
+sa_gdf_utm = sa_gdf.to_crs(utm)
+sa_gdf_utm.head()
+
+
+coordinates_array = np.asarray(sa_gdf_utm.geometry[0].exterior.coords)[:-1]# Note that the first and last points are the same
+
+# Check out the coordinates and see the warping
+sa_gdf_utm.plot()
+plt.plot(coordinates_array[0][0], coordinates_array[0][1], "m*", label="index=0")
+plt.plot(coordinates_array[1][0], coordinates_array[1][1], "k.", label="index=1")
+plt.plot(coordinates_array[2][0], coordinates_array[2][1], "g^", label="index=2")
+plt.plot(coordinates_array[3][0], coordinates_array[3][1], "yP", label="index=3")
+plt.legend()
+axes = plt.gca()
+plt.xlabel("Longitude")
+plt.ylabel("Latitude")
+
+latitudes = []
+longitudes = []
+for i, crd in enumerate(coordinates_array):
+    latitudes.append(coordinates_array[i][1])
+    longitudes.append(coordinates_array[i][0])
+    
+
+# What is the error from the warped shape box??
+lat_error_1_km = abs(latitudes[0] - latitudes[3])/1000    
+lat_error_2_km = abs(latitudes[1] - latitudes[2])/1000
+
+long_error_1_km = abs(longitudes[2] - longitudes[3])/1000    
+long_error_2_km = abs(longitudes[0] - longitudes[1])/1000     
+
+# There is substantial error...ok so it is an estimate? Use the largest values
+
+north_extent  =   max(latitudes)
+south_extent  =   min(latitudes)
+west_extent   =   min(longitudes)
+east_extent   =   max(longitudes)
+
+print("north extent:   %2.2f" %north_extent)
+print("south extent:   %2.2f" %south_extent)
+print("west extent:   %2.2f" %west_extent)
+print("east extent:   %2.2f" %east_extent)
+
+ew_extent = abs(east_extent - west_extent)
+sn_extent = abs(south_extent - north_extent)
+
+size_of_box = ew_extent*sn_extent # Degrees squared
+    
+# Calculate error as proportion of size (max error from conversion to utm)
+
+error_lat_scaled_percent = max(lat_error_1_km, lat_error_2_km)*100000/sn_extent
+error_long_scaled_percent = max(long_error_1_km, long_error_2_km)*100000/ew_extent
+
+# Get the size of each cell
+
+ns_extent = sa_gdf_utm[3] - sa_gdf_utm[1] # north-south
+ew_extent = sa_gdf_utm[2] - sa_gdf_utm[0]
+
+# This is in degrees, I need it in metres.
+
+
+delr = sn_extent/nrows # Spacing along rows, i.e. this is the width of the columns
+delc = ew_extent/ncols # Spacing along columns, i.e. this is the width of the rows
+
+print("nrows: %s, ncols: %s" %(nrows,ncols))
 
 # Crop the data to the study area ---------------------------------------------
 
@@ -244,6 +314,8 @@ axes_extent = ax1.axis()
 
 plt.savefig(os.path.join("figures", "dem_with_contours"), dpi=300)
 ######################################
+
+
 
 
 #------------------------------------------------------------------------------
@@ -342,8 +414,8 @@ raster_wt.shape
 # Define a 3d np array based on this raster, i.e. change to [x, y, z] values 
 
 #### ! Double check these are the right way around
-x = np.arange(0, nrows)
-y = np.arange(0, ncols)
+x = np.arange(0, ncols)
+y = np.arange(0, nrows)
 
 xi, yi = np.meshgrid(x, y) # , sparse=True
 
@@ -636,7 +708,7 @@ for wt_raster_idx in range(len(wt_raster_optns)):
     
     ###########################################
     # Trying to plot up flow lines
-    
+wt_raster_idx=0    
 for wt_raster_idx in range(len(wt_raster_optns)):
     
     #choose wt raster to work with
@@ -680,7 +752,79 @@ for wt_raster_idx in range(len(wt_raster_optns)):
     plt.savefig(os.path.join("figures", "wt_grad_quiver_z%i" 
                              %wt_raster_idx), dpi=300)
     ###########################################
+    
+    # Make a streamplot from gradients (instead of quiver)
+#    fig1, ax1 = plt.subplots()
+#    show(dem, ax=ax1, cmap="terrain", alpha=0.5)
+#    plt.suptitle("Streamplot map from gradients, wt: z%i" %wt_raster_idx)
+#
+#    ax1.streamplot(X, Y, U, V, density=0.5)
+#    plt.savefig(os.path.join("figures", "wt_grad_streamplot_z%i" 
+#                                 %wt_raster_idx), dpi=300)
+    ###########################################
+wt_raster_idx=0    
+for wt_raster_idx in range(len(wt_raster_optns)):
+    
+    #choose wt raster to work with
+    wt_raster = wt_raster_optns[wt_raster_idx].T #grid_wt_z0.T
+    
+    print("Starting loop with wt raster: z%i" %wt_raster_idx)
+    
+    gradient_wt = np.gradient(wt_raster)      
+    
+    # Make a streamplot directly from the wt raster data (not the gradient data)
+    # For streamplot to work the U and V values are actually the 
+    # VELOCITY at each point on the grid...so this is not correct
+    
+    X = xi
+    Y = yi
+    
+    K_value = 1
+    B = 100 # Aquifer thickness
+    prsty = 0.1 # Porosity estimate    
+    
+    A_x = delc*B # Cross sectional area of flow in x direction
+    A_y = delr*B # Cross sectional area of flow in y direction
+    
+    X_v = ((gradient_wt[0]/delr)*K_value*A_x)/prsty # Estimate of darcy's flux
+    Y_v = ((gradient_wt[1]/delc)*K_value*A_y)/prsty # Estimate of darcy's flux
 
+    xi.shape
+    yi.shape
+    X_v.shape
+    Y_v.shape
+    
+    
+    
+    ###########################################
+    # Plot the Darcy's velocity (q)
+    fig = plt.figure()
+    plt.suptitle("q map from wt: z%i, K: %2.2f, B: %i, porosity: %2.2f" 
+                 %(wt_raster_idx, K_value, B, prsty))
+    ax1 = plt.subplot(2,1,1)
+
+    img1 = plt.imshow(X_v, alpha=0.5, vmin=-2, vmax=2)
+    plt.colorbar(img1)  
+    ax2 = plt.subplot(2,1,2)
+    
+
+    img2 = plt.imshow(Y_v, alpha=0.5, vmin=-2, vmax=2) 
+    plt.colorbar(img2)
+    plt.savefig(os.path.join("figures", "wt_q_z%i" 
+                                 %wt_raster_idx), dpi=300)
+    
+    ###########################################
+    fig1, ax1 = plt.subplots()
+    plt.suptitle("Streamplot map from wt: z%i" %wt_raster_idx)
+    img1 = ax1.imshow(wt_raster, alpha=0.5)
+    
+    ax1.streamplot(xi, yi, X_v, Y_v, density=0.8)
+    cbar = plt.colorbar(img1)
+    cbar.set_label('Hydraulic head [m]')
+
+    plt.savefig(os.path.join("figures", "wt_streamplot_z%i" 
+                                 %wt_raster_idx), dpi=300)
+    ###########################################
 #------------------------------------------------------------------------------
 # Making comparisons between water table contours and the river network
 
@@ -707,3 +851,12 @@ for wt_raster_idx in range(len(wt_raster_optns)):
     print("Riv min: %2.2f, Water table min: %2.2f " %(np.nanmin(riv_raster), np.nanmin(wt_raster)))
 
 
+#------------------------------------------------------------------------------
+    
+# Adding streamlines to a vector field
+    
+#------------------------------------------------------------------------------
+# Adding streamlines to the wt contour map
+
+for wt_raster_idx in range(len(wt_raster_optns)):
+    
