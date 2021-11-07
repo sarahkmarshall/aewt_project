@@ -108,10 +108,93 @@ with rio.open(os.path.join(dem_fldr_asc, dem_rstr_nm_asc)) as grd:
 dem.shape
 mask = np.zeros_like(dem)
 nrows,ncols = np.shape(mask)
+  
+
+#------------------------------------------------------------------------------
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Watertable elevation RASTER Data --------------------------------------------
+
+# This raster file was formed using the Topo to Raster tool in the Spatial Analyst 
+# toolset from the values within the "height" field and clipped to the Revised 
+# GAB boundary and GEODATA TOPO 250K coastline.
+
+extent_original_raster = {"west": [131.7986], # From GA Metadata
+                          "east": [153.1901], 
+                          "north": [-10.3492], 
+                          "south": [-33.1288]} 
+
+# Import ascii file (because I am having trouble working with tiffs)
+wt_fldr_asc = os.path.join("input_data", "GAB_WT", "Watertable_Elev", "ASCII_Grid")
+wt_rstr_nm_asc = 'wt.grd'
+
+# Import data with the crs included - it doesn't have a crs attributed to it
+wt_rstr_original = rio.open(os.path.join(wt_fldr_asc, wt_rstr_nm_asc))
+print(wt_rstr_original.crs)
+#? This hasn't worked?
+
+# Now import the data only as a raster object (i.e. as an array)
+with rio.open(os.path.join(wt_fldr_asc, wt_rstr_nm_asc)) as grd_wt:
+    wt_raster_gab = grd_wt.read()[0,:,:]
+    grid_wt_meta = grd_wt.profile   # Gets the metadata automatically
+    bounds_wt = grd_wt.bounds
+    res_wt = grd_wt.res
+
+#Use these parameters from the download to set up my extent for future data analysis
+wt_raster_gab.shape
+nrows_wt,ncols_wt = np.shape(mask)
+
+# Get values that aren't nan (-9999)
+wt_rstr_notnan_mask = wt_raster_gab > -9999 # get's boolean array of true/false where condition is satisfied
+
+# Different tact --> replace values that are -9999 with np.nan
+wt_raster_gab_nan = np.where(wt_raster_gab == -9999, np.nan, wt_raster_gab)
+
+##################################################
+fig = plt.figure()
+ax1 = plt.subplot(1,1,1)
+img1 = ax1.imshow(wt_raster_gab_nan)
+cbar = plt.colorbar(img1)
+plt.savefig(os.path.join("figures", "original_raster"), dpi=300)
+##################################################
+
+# BUT how do I crop this so that I get only the area that I am interested in?
+
+# First re-project it based on the original extent of the dataset
+# Need to make it as a geodataframe of points. 
+
+# Convert resolution 
 
 
 
+# xll, yll = origin of the model (lower left corner)
+#?????????????BUT THIS IS SAYING THE PIXEL COORD IS THE LOWER LEFT COORD NOT THE CENTRE
+xll  = (extent_original_raster["west"][0])
+yll  = (extent_original_raster["south"][0])     
 
+dxdy = 1000 # grid spacing (in model units)
+rot = 0 # rotation (positive counterclockwise)
+
+# epsg code specifying coordinate reference system
+model_epsg = wgs84 # 
+
+# row and column spacings
+delc1 = np.ones(nrow, dtype=float) * dxdy
+delr1 = np.ones(ncol, dtype=float) * dxdy
+
+sr = SpatialReference(delr=delr1, delc=delc1, xll=xll, yll=yll, rotation=rot, epsg=model_epsg)
+sr
+
+# Get information about grid coordinates
+sr.xcentergrid, sr.ycentergrid
+
+# Get cell vertices
+sr.vertices
+
+# Get grid bounds
+sr.bounds
+
+# Write shapefile of the grid
+sr.write_shapefile(os.path.join(dataDirectory, 'grid.shp'))
 
 #------------------------------------------------------------------------------
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -857,6 +940,6 @@ for wt_raster_idx in range(len(wt_raster_optns)):
     
 #------------------------------------------------------------------------------
 # Adding streamlines to the wt contour map
-
-for wt_raster_idx in range(len(wt_raster_optns)):
-    
+#
+#for wt_raster_idx in range(len(wt_raster_optns)):
+#    
