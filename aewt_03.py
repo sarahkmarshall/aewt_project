@@ -19,6 +19,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 import os
+from osgeo import osr, gdal
 import numpy as np
 import pyproj
 import pandas as pd
@@ -51,6 +52,8 @@ print('pyproj version: {}'.format(pyproj.__version__))
 #=====DIRECTORIES==============================================================
 
 overallName = "AE_01"
+
+wt_cmap = "viridis_r"
 
 #------------------------------------------------------------------------------
 # FOLDER STRUCTURES
@@ -109,92 +112,6 @@ dem.shape
 mask = np.zeros_like(dem)
 nrows,ncols = np.shape(mask)
   
-
-#------------------------------------------------------------------------------
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Watertable elevation RASTER Data --------------------------------------------
-
-# This raster file was formed using the Topo to Raster tool in the Spatial Analyst 
-# toolset from the values within the "height" field and clipped to the Revised 
-# GAB boundary and GEODATA TOPO 250K coastline.
-
-extent_original_raster = {"west": [131.7986], # From GA Metadata
-                          "east": [153.1901], 
-                          "north": [-10.3492], 
-                          "south": [-33.1288]} 
-
-# Import ascii file (because I am having trouble working with tiffs)
-wt_fldr_asc = os.path.join("input_data", "GAB_WT", "Watertable_Elev", "ASCII_Grid")
-wt_rstr_nm_asc = 'wt.grd'
-
-# Import data with the crs included - it doesn't have a crs attributed to it
-wt_rstr_original = rio.open(os.path.join(wt_fldr_asc, wt_rstr_nm_asc))
-print(wt_rstr_original.crs)
-#? This hasn't worked?
-
-# Now import the data only as a raster object (i.e. as an array)
-with rio.open(os.path.join(wt_fldr_asc, wt_rstr_nm_asc)) as grd_wt:
-    wt_raster_gab = grd_wt.read()[0,:,:]
-    grid_wt_meta = grd_wt.profile   # Gets the metadata automatically
-    bounds_wt = grd_wt.bounds
-    res_wt = grd_wt.res
-
-#Use these parameters from the download to set up my extent for future data analysis
-wt_raster_gab.shape
-nrows_wt,ncols_wt = np.shape(mask)
-
-# Get values that aren't nan (-9999)
-wt_rstr_notnan_mask = wt_raster_gab > -9999 # get's boolean array of true/false where condition is satisfied
-
-# Different tact --> replace values that are -9999 with np.nan
-wt_raster_gab_nan = np.where(wt_raster_gab == -9999, np.nan, wt_raster_gab)
-
-##################################################
-fig = plt.figure()
-ax1 = plt.subplot(1,1,1)
-img1 = ax1.imshow(wt_raster_gab_nan)
-cbar = plt.colorbar(img1)
-plt.savefig(os.path.join("figures", "original_raster"), dpi=300)
-##################################################
-
-# BUT how do I crop this so that I get only the area that I am interested in?
-
-# First re-project it based on the original extent of the dataset
-# Need to make it as a geodataframe of points. 
-
-# Convert resolution 
-
-
-
-# xll, yll = origin of the model (lower left corner)
-#?????????????BUT THIS IS SAYING THE PIXEL COORD IS THE LOWER LEFT COORD NOT THE CENTRE
-xll  = (extent_original_raster["west"][0])
-yll  = (extent_original_raster["south"][0])     
-
-dxdy = 1000 # grid spacing (in model units)
-rot = 0 # rotation (positive counterclockwise)
-
-# epsg code specifying coordinate reference system
-model_epsg = wgs84 # 
-
-# row and column spacings
-delc1 = np.ones(nrow, dtype=float) * dxdy
-delr1 = np.ones(ncol, dtype=float) * dxdy
-
-sr = SpatialReference(delr=delr1, delc=delc1, xll=xll, yll=yll, rotation=rot, epsg=model_epsg)
-sr
-
-# Get information about grid coordinates
-sr.xcentergrid, sr.ycentergrid
-
-# Get cell vertices
-sr.vertices
-
-# Get grid bounds
-sr.bounds
-
-# Write shapefile of the grid
-sr.write_shapefile(os.path.join(dataDirectory, 'grid.shp'))
 
 #------------------------------------------------------------------------------
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -306,11 +223,6 @@ size_of_box = ew_extent*sn_extent # Degrees squared
 
 error_lat_scaled_percent = max(lat_error_1_km, lat_error_2_km)*100000/sn_extent
 error_long_scaled_percent = max(long_error_1_km, long_error_2_km)*100000/ew_extent
-
-# Get the size of each cell
-
-ns_extent = sa_gdf_utm[3] - sa_gdf_utm[1] # north-south
-ew_extent = sa_gdf_utm[2] - sa_gdf_utm[0]
 
 # This is in degrees, I need it in metres.
 
@@ -933,13 +845,384 @@ for wt_raster_idx in range(len(wt_raster_optns)):
     print("Riv max: %2.2f, Water table max: %2.2f " %(np.nanmax(riv_raster), np.nanmax(wt_raster)))
     print("Riv min: %2.2f, Water table min: %2.2f " %(np.nanmin(riv_raster), np.nanmin(wt_raster)))
 
+#------------------------------------------------------------------------------
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Watertable elevation RASTER Data --------------------------------------------
+# Import ascii file (because I am having trouble working with tiffs)
+wt_fldr_asc = os.path.join("input_data", "GAB_WT", "Watertable_Elev", "ASCII_Grid")
+wt_rstr_nm_tif = 'wt1.tif'
 
-#------------------------------------------------------------------------------
+wt_gab_raster = rio.open(os.path.join(wt_fldr_asc, wt_rstr_nm_tif),
+                         driverstr="GTiff", crs=wgs84)
+
+
+wt_gab_raster1 = rio.open(os.path.join(wt_fldr_asc, wt_rstr_nm_tif),
+                         driverstr="GTiff")
+  
+
+###########################################################
+fig1, ax1 = plt.subplots()
+show(wt_gab_raster1, ax=ax1, cmap="terrain", alpha=0.5)
+plt.xlabel("Longitude")
+plt.ylabel("Latitude")
+###########################################################
+
+
+### Crop area based on shapefile of my study area
+# FRom Here: https://rasterio.readthedocs.io/en/latest/topics/masking-by-shapefile.html
+import rasterio.mask
+
+with rio.open(os.path.join(wt_fldr_asc, wt_rstr_nm_tif)) as src:
+    out_image, out_transform = rasterio.mask.mask(src, sa_gdf["geometry"], crop=True)
+    out_meta = src.meta
     
-# Adding streamlines to a vector field
+type(out_image)
+out_image.shape
+out_image[0].shape
+
+wt_rstr_gab_crop_mask = out_image[0] > 0
+wt_rstr_gab_crop_mask.shape
+
+image = out_image[0][wt_rstr_gab_crop_mask]
+# Different tact --> replace values that are < 0  with np.nan
+wt_rstr_gab_crop = np.where(out_image[0] < 0, np.nan, out_image[0])
+
+###########################################################
+fig1, ax1 = plt.subplots()
+show(wt_rstr_gab_crop, ax=ax1, cmap="viridis", alpha=0.5)
+plt.xlabel("Longitude")
+plt.ylabel("Latitude")
+###########################################################
+
+type(studyarea)
+type(sa_gdf)
+sa_gdf.crs
+
+# Write it as a new file
+
+out_meta.update({"driver": "GTiff",
+                 "height": out_image.shape[1],
+                 "width": out_image.shape[2],
+                 "transform": out_transform})
+
+with rasterio.open(os.path.join("output_data", "gab_real_crop.tif"), "w", **out_meta) as dest:
+    dest.write(out_image)
+
+
+# NOW PULL IN THAT NEW TIFF AGAIN
     
-#------------------------------------------------------------------------------
-# Adding streamlines to the wt contour map
-#
-#for wt_raster_idx in range(len(wt_raster_optns)):
-#    
+
+# Compare the shapes - because they have different 
+
+with rio.open(os.path.join("output_data", "gab_real_crop.tif")) as grd_wt:
+    wt_real_crop = grd_wt.read()[0,:,:] # Reads it as a numpy array
+    wt_real_crop_meta = grd_wt.profile   # Gets the metadata automatically
+    wt_real_crop_bounds = grd_wt.bounds
+    wt_real_crop_res = grd_wt.res
+
+# Compare the bounds with the DEM
+    
+bounds # From dem
+wt_real_crop_bounds # From the gab "real" interpolated (using gis topo to raster) file
+
+
+
+
+
+
+
+###############################################################################
+# Below - move to scrap?
+###############################################################################
+
+# Import ascii file (because I am having trouble working with tiffs)
+
+
+# Import data with the crs included - it doesn't have a crs attributed to it
+#wt_rstr_original = rio.open(os.path.join(wt_fldr_asc, wt_rstr_nm_asc))
+#print(wt_rstr_original.crs)
+
+# Now import the data only as a raster object (i.e. as an array)
+with rio.open(os.path.join(wt_fldr_asc, wt_rstr_nm_asc)) as grd_wt:
+    wt_raster_gab = grd_wt.read()[0,:,:] # Reads it as a numpy array
+    grid_wt_meta = grd_wt.profile   # Gets the metadata automatically
+    bounds_wt = grd_wt.bounds
+    res_wt = grd_wt.res
+
+
+type(wt_gab_raster)
+wt_gab_raster.crs
+wt_gab_raster.shape
+geotransform = [ bounds_wt.left, 0.0, 0, bounds_wt.top, 0, 30 ]  
+
+output_file = os.path.join("output_data", "wt_raster_gab.tif")
+(x,y) = data.shape 
+
+# Try and turn my ASCII file to a gtif
+
+driver = gdal.GetDriverByName("GTiff")
+dst_ds = driver.Create(output_file, y, x, 1, gdal.GDT_Byte )
+raster = np.zeros( (x, y) )
+
+# top left x, w-e pixel resolution, rotation, top left y, rotation, n-s pixel resolution
+dst_ds.SetGeoTransform( geotransform )
+  
+# set the reference info 
+srs = osr.SpatialReference()
+srs.SetWellKnownGeogCS("WGS84")
+dst_ds.SetProjection( srs.ExportToWkt() )
+
+# write the band
+dst_ds.GetRasterBand(1).WriteArray(raster)
+
+################################################################################ 
+# SCRAP BELOW
+
+
+
+
+
+
+
+
+geotransform = [ bounds_wt.left, 0.0, 0, bounds_wt.top, 0, 30 ]  
+geoprojection = utm
+data = wt_raster_gab
+
+(x,y) = data.shape
+format = "GTiff"
+noDataValue = -9999
+driver = gdal.GetDriverByName(format)
+# you can change the dataformat but be sure to be able to store negative values including -9999
+dst_datatype = gdal.GDT_Float32
+
+
+dst_ds = driver.Create(filename, y, x, 1, dst_datatype)
+dst_ds.GetRasterBand(1).WriteArray(data)
+dst_ds.GetRasterBand(1).SetNoDataValue( noDataValue )
+dst_ds.SetGeoTransform( geotransform )
+dst_ds.SetProjection("epsg:4326")
+
+# This raster file was formed using the Topo to Raster tool in the Spatial Analyst 
+# toolset from the values within the "height" field and clipped to the Revised 
+# GAB boundary and GEODATA TOPO 250K coastline.
+
+extent_original_raster = {"west": [131.7986], # From GA Metadata
+                          "east": [153.1901], 
+                          "north": [-10.3492], 
+                          "south": [-33.1288]} 
+
+extent_original_raster_utm = {"west": [-1056747.376], # From GA Metadata
+                              "east": [961252.624], 
+                              "north": [-1122970.8856], 
+                              "south": [-3596770.8856]} 
+
+# Import ascii file (because I am having trouble working with tiffs)
+wt_fldr_asc = os.path.join("input_data", "GAB_WT", "Watertable_Elev", "ASCII_Grid")
+wt_rstr_nm_asc = 'wt_rstr_crop_resample.tif'
+
+# Import data with the crs included - it doesn't have a crs attributed to it
+wt_rstr_original = rio.open(os.path.join(wt_fldr_asc, wt_rstr_nm_asc))
+print(wt_rstr_original.crs)
+
+# Now import the data only as a raster object (i.e. as an array)
+with rio.open(os.path.join(wt_fldr_asc, wt_rstr_nm_asc)) as grd_wt:
+    wt_raster_gab = grd_wt.read()[0,:,:] # Reads it as a numpy array
+    grid_wt_meta = grd_wt.profile   # Gets the metadata automatically
+    bounds_wt = grd_wt.bounds
+    res_wt = grd_wt.res
+
+# What is the crs?
+print(grd_wt.crs)
+# Something funky going on I don't think the crs is correct
+
+type(wt_raster_gab) # It's a numpy array
+
+##################################################
+fig = plt.figure()
+ax1 = plt.subplot(1,1,1)
+img1 = ax1.imshow(wt_raster_gab, cmap=wt_cmap)
+cbar = plt.colorbar(img1)
+plt.savefig(os.path.join("figures", "original_raster_resampled"), dpi=300)
+##################################################
+
+
+# - - - - - - - - - - - - - - - - - - - - - - 
+# When I downloaded a raster with no crs - how do I get rid of nans and 
+# resample and add a georeference
+
+#Use these parameters from the download to set up my extent for future data analysis
+wt_raster_gab.shape
+nrows_wt,ncols_wt = np.shape(mask)
+
+# Get values that aren't nan (-9999)
+wt_rstr_notnan_mask = wt_raster_gab > -9999 # get's boolean array of true/false where condition is satisfied
+ttl_n_elements = wt_rstr_notnan_mask.size
+count = np.count_nonzero(wt_rstr_notnan_mask)
+
+n_nan_values = ttl_n_elements - count
+print("Total number of nans in the water table raster is: %i" %n_nan_values)
+
+# Different tact --> replace values that are -9999 with np.nan
+wt_raster_gab_nan = np.where(wt_raster_gab == -9999, np.nan, wt_raster_gab)
+
+
+#### --------------------------------------------------------------------------
+# BUT how do I crop this so that I get only the area that I am interested in?
+
+# First re-project it based on the original extent of the dataset
+# Need to make it as a geodataframe of points. 
+
+# Convert resolution 
+# xll, yll = origin of the model (lower left corner)
+#?????????????BUT THIS IS SAYING THE PIXEL COORD IS THE LOWER LEFT COORD NOT THE CENTRE
+xll  = bounds_wt.left # (extent_original_raster["west"][0])
+yll  = bounds_wt.bottom # (extent_original_raster["south"][0])     
+
+dxdy = 30 # grid spacing (in model units)
+rot = 0 # rotation (positive counterclockwise)
+
+# epsg code specifying coordinate reference system
+model_epsg = wgs84 # 
+
+# row and column spacings
+delc1 = np.ones(grid_wt_meta["width"], dtype=float) * dxdy
+delr1 = np.ones(grid_wt_meta["height"], dtype=float) * dxdy
+
+sr = SpatialReference(delr=delr1, delc=delc1, xll=xll, yll=yll, rotation=rot, epsg=4326)
+sr
+
+# Get information about grid coordinates
+sr.xcentergrid, sr.ycentergrid
+
+# Get cell vertices
+sr.vertices
+
+# Get grid bounds
+sr.bounds
+
+# Write shapefile of the grid
+sr.write_shapefile(os.path.join("output_data", 'grid.shp'))
+
+# Reading only the ascii grid (at the moment it has no crs)
+with rio.open(os.path.join(wt_fldr_asc, wt_rstr_nm_asc), "r") as src:
+    raster = src.read()
+    kwargs = src.meta.copy()
+    kwargs.update({
+        'crs': wgs84}) # Update the crs during the process of reading
+    bounds_wt = src.bounds
+    res_wt = src.res
+    
+# Now I am going to try and write this as a file (hopefully with a crs)    
+with rio.open('assigned_crs.asc', 'w', **kwargs) as dst:
+    dst.crs = wgs84
+    dst.write(raster)
+
+
+
+wt_gab_raster_with_crs = rio.open('assigned_crs.asc')
+print(wt_gab_raster_with_crs.crs)
+    
+type(raster)
+raster.crs
+
+# Now import the data only as a raster object (i.e. as an array)
+# Now import the data only as a raster object (i.e. as an array)
+with rio.open(os.path.join(wt_fldr_asc, wt_rstr_nm_asc), crs=wgs84) as grd:
+    wtr = grd.read()
+    wtr_meta = grd.profile   # Gets the metadata automatically
+    wtrbounds = grd.bounds
+    wtrres = grd.res
+
+type(wtr)
+
+#--------------------------------
+
+ncols         174
+nrows         115
+xllcorner     14.97
+yllcorner     -34.54
+cellsize      0.11
+
+
+# Set file vars
+output_file = "out.tif"
+
+# Create gtif
+driver = gdal.GetDriverByName("GTiff")
+dst_ds = driver.Create(output_file, ncols, nrows, 1, gdal.GDT_Byte )
+raster = np.zeros( (174, 115) )
+
+# top left x, w-e pixel resolution, rotation, top left y, rotation, n-s pixel resolution
+dst_ds.SetGeoTransform( [ bounds[0], 0.0, 0, bounds[3], 0, 30 ] )
+  
+# set the reference info 
+srs = osr.SpatialReference()
+srs.SetWellKnownGeogCS("WGS84")
+dst_ds.SetProjection( srs.ExportToWkt() )
+
+# write the band
+dst_ds.GetRasterBand(1).WriteArray(raster)
+
+
+#-----------------------------------------------------------------
+
+#Import gdal
+
+
+#Open existing dataset
+src_ds = gdal.Open( 'assigned_crs.asc' )
+
+#Open output format driver, see gdal_translate --formats for list
+format = "GTiff"
+driver = gdal.GetDriverByName( format )
+
+#Output to new format
+dst_ds = driver.CreateCopy( "wt_tiff.tif", "assigned_crs.asc", 0 )
+
+#Properly close the datasets to flush to disk
+dst_ds = None
+src_ds = None
+
+# ----------------------------------------------------------------------------
+# From  https://www.programcreek.com/python/example/83634/gdal.GetDriverByName
+
+def writeFile(filename, geotransform, geoprojection, data):
+	(x,y) = data.shape
+	format = "GTiff"
+	noDataValue = -9999
+	driver = gdal.GetDriverByName(format)
+	# you can change the dataformat but be sure to be able to store negative values including -9999
+	dst_datatype = gdal.GDT_Float32
+
+	#print(data)
+
+	dst_ds = driver.Create(filename,y,x,1,dst_datatype)
+	dst_ds.GetRasterBand(1).WriteArray(data)
+	dst_ds.GetRasterBand(1).SetNoDataValue( noDataValue )
+	dst_ds.SetGeoTransform(geotransform)
+	dst_ds.SetProjection(geoprojection)
+	return 1 
+
+
+filename = "raster.asc"
+geotransform = [ bounds_wt.left, 0.0, 0, bounds_wt.top, 0, 30 ]  
+geoprojection = wgs84
+data = raster
+
+(x,y) = data.shape
+format = "GTiff"
+noDataValue = -9999
+driver = gdal.GetDriverByName(format)
+# you can change the dataformat but be sure to be able to store negative values including -9999
+dst_datatype = gdal.GDT_Float32
+
+
+dst_ds = driver.Create(filename, y, x, 1, dst_datatype)
+dst_ds.GetRasterBand(1).WriteArray(data)
+dst_ds.GetRasterBand(1).SetNoDataValue( noDataValue )
+dst_ds.SetGeoTransform( geotransform )
+dst_ds.SetProjection("epsg:4326")
+
+# top left x, w-e pixel resolution, rotation, top left y, rotation, n-s pixel resolution
+
