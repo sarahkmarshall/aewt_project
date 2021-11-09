@@ -18,12 +18,13 @@ from itertools import groupby
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
-import os
+import os 
 from osgeo import osr, gdal
 import numpy as np
 import pyproj
 import pandas as pd
 import rasterio as rio
+import rasterio.mask
 from rasterio.features import rasterize
 from rasterio import Affine
 from rasterio.plot import show
@@ -43,6 +44,7 @@ from owslib.wcs import WebCoverageService
 
 print('python version: {}' .format(sys.version))
 print('numpy version: {}'.format(np.__version__))
+print('pandas version: {}'.format(pd.__version__))
 print('matplotlib version: {}'.format(mpl.__version__))
 print('flopy version: {}'.format(flopy.__version__))
 print('pyproj version: {}'.format(pyproj.__version__))
@@ -51,10 +53,10 @@ print('pyproj version: {}'.format(pyproj.__version__))
 # GDAL 2.3.3, released 2018/12/14. Got this by typing into conda prompt: gdalinfo --version
 #=====DIRECTORIES==============================================================
 
-overallName = "AE_01"
+#overallName = "AE_01"
 
 wt_cmap = "viridis_r"
-
+dem_cmap= "terrain"
 #------------------------------------------------------------------------------
 # FOLDER STRUCTURES
 
@@ -79,8 +81,6 @@ if not os.path.exists("output_data"):
 #------------------------------------------------------------------------------
 # DATA SET UP & PROJECTIONS
 
-wt_contour_fldr = os.path.join("input_data", "GAB_WT", "Watertable_Contour")
- 
 wgs84 = pyproj.CRS('epsg:4326')
 utm   = pyproj.CRS('epsg:32755')
 gda94 = pyproj.CRS('epsg:4283')
@@ -93,43 +93,80 @@ gda94 = pyproj.CRS('epsg:4283')
 # datasets to work with/crop to
 
 # Import ascii file (because I am having trouble working with tiffs)
-dem_fldr_asc = os.path.join("input_data", "Elvis_dl_25Oct21")
-dem_rstr_nm_asc = 'Hydro_Enforced_1_Second_DEM.asc'
+dem_rstr_nm_asc = os.path.join("input_data", "Elvis_dl_25Oct21",
+                            "Hydro_Enforced_1_Second_DEM.asc")
 
 # Import data with the crs included
-dem_projected = rio.open(os.path.join(dem_fldr_asc, dem_rstr_nm_asc))
-dem_projected.crs
+dem_rstr = rio.open(dem_rstr_nm_asc)
+dem_rstr
+dem_rstr.mode
+dem_rstr.closed
+dem_rstr.crs
+
+type(dem_rstr)
+dem_rstr.shape
+
+# The indexes, Numpy data types, and nodata values of all a dataset’s bands 
+# can be had from its indexes, dtypes, and nodatavals attributes.
+for i, dtype, nodataval in zip(dem_rstr.indexes[0:3], 
+                               dem_rstr.dtypes[0:3], 
+                               dem_rstr.nodatavals[0:3]):
+    print(i, dtype, nodataval)
+    
+    # ---------------------------
 
 # Now import the data only as a raster object (i.e. as an array)
-with rio.open(os.path.join(dem_fldr_asc, dem_rstr_nm_asc)) as grd:
+with rio.open(dem_rstr_nm_asc) as grd:
     dem = grd.read()[0,:,:]
+    grid_meta = grd.profile   # Gets the metadata automatically
+    bounds = grd.bounds
+    res = grd.res
+    
+    
+with rio.open(dem_rstr_nm_asc) as grd:
+    dem1 = grd.read(1)
     grid_meta = grd.profile   # Gets the metadata automatically
     bounds = grd.bounds
     res = grd.res
 
 #Use these parameters from the download to set up my extent for future data analysis
-dem.shape
+print("The shape: %s" % (dem.shape,))
 mask = np.zeros_like(dem)
 nrows,ncols = np.shape(mask)
-  
+print("DEM raster type: %s" % (type(dem_rstr)))
+
+###############
+# PLot DEM raster
+
+plt.figure()
+ax1 = plt.subplot(1,1,1)
+show(dem_rstr)
+show(dem_rstr, ax=ax1, cmap=dem_cmap)
+
 
 #------------------------------------------------------------------------------
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Water table contours (shapefiles) -------------------------------------------
 
-wt_contour = gpd.read_file(os.path.join(wt_contour_fldr, 'wt_contour.shp'))
+wt_contour_fldr = os.path.join("input_data", "GAB_WT", "Watertable_Contour",
+                               "wt_contour.shp")
+
+
+wt_contour = gpd.read_file(wt_contour_fldr)
 wt_contour.crs # Check existing coordinate reference system
 
-wt_contour_wgs84 = wt_contour.to_crs(wgs84)
-wt_contour_wgs84.crs
+wt_contour = wt_contour.to_crs(wgs84)
+wt_contour.crs
 
 # Checking out the data ------------------------------------------------------
 
-print(wt_contour_wgs84.head())
+print(wt_contour.head())
+
+
 
 # Make a plot
 fig, ax = plt.subplots()
-wt_contour_wgs84.plot(ax=ax, color="k", alpha=0.5, linewidth=0.5)
+wt_contour.plot(ax=ax, color="k", alpha=0.5, linewidth=0.5)
 
 
 ax.add_patch(mpl.patches.Polygon([[bounds[0], bounds[1]],   # bottom left
@@ -169,6 +206,8 @@ sa_df["geometry"] = [studyarea]
 
 sa_gdf = gpd.GeoDataFrame(sa_df, geometry='geometry',crs=wgs84)
 
+
+################################################################################
 # Convert to utm to get the size in metres
 
 sa_gdf_utm = sa_gdf.to_crs(utm)
@@ -177,80 +216,25 @@ sa_gdf_utm.head()
 
 coordinates_array = np.asarray(sa_gdf_utm.geometry[0].exterior.coords)[:-1]# Note that the first and last points are the same
 
-# Check out the coordinates and see the warping
-sa_gdf_utm.plot()
-plt.plot(coordinates_array[0][0], coordinates_array[0][1], "m*", label="index=0")
-plt.plot(coordinates_array[1][0], coordinates_array[1][1], "k.", label="index=1")
-plt.plot(coordinates_array[2][0], coordinates_array[2][1], "g^", label="index=2")
-plt.plot(coordinates_array[3][0], coordinates_array[3][1], "yP", label="index=3")
-plt.legend()
-axes = plt.gca()
-plt.xlabel("Longitude")
-plt.ylabel("Latitude")
-
-latitudes = []
-longitudes = []
-for i, crd in enumerate(coordinates_array):
-    latitudes.append(coordinates_array[i][1])
-    longitudes.append(coordinates_array[i][0])
-    
-
-# What is the error from the warped shape box??
-lat_error_1_km = abs(latitudes[0] - latitudes[3])/1000    
-lat_error_2_km = abs(latitudes[1] - latitudes[2])/1000
-
-long_error_1_km = abs(longitudes[2] - longitudes[3])/1000    
-long_error_2_km = abs(longitudes[0] - longitudes[1])/1000     
-
-# There is substantial error...ok so it is an estimate? Use the largest values
-
-north_extent  =   max(latitudes)
-south_extent  =   min(latitudes)
-west_extent   =   min(longitudes)
-east_extent   =   max(longitudes)
-
-print("north extent:   %2.2f" %north_extent)
-print("south extent:   %2.2f" %south_extent)
-print("west extent:   %2.2f" %west_extent)
-print("east extent:   %2.2f" %east_extent)
-
-ew_extent = abs(east_extent - west_extent)
-sn_extent = abs(south_extent - north_extent)
-
-size_of_box = ew_extent*sn_extent # Degrees squared
-    
-# Calculate error as proportion of size (max error from conversion to utm)
-
-error_lat_scaled_percent = max(lat_error_1_km, lat_error_2_km)*100000/sn_extent
-error_long_scaled_percent = max(long_error_1_km, long_error_2_km)*100000/ew_extent
-
-# This is in degrees, I need it in metres.
-
-
-delr = sn_extent/nrows # Spacing along rows, i.e. this is the width of the columns
-delc = ew_extent/ncols # Spacing along columns, i.e. this is the width of the rows
-
-print("nrows: %s, ncols: %s" %(nrows,ncols))
-
 # Crop the data to the study area ---------------------------------------------
 
 # First get rid of all contours that aren't contours (i.e. the gab boundary)
-wt_contour_wgs84_filtr = wt_contour_wgs84[wt_contour_wgs84['height']>-9999]
+wt_contour_filtr = wt_contour[wt_contour['height']>-9999]
 
 print(sa_gdf.crs)
-print(wt_contour_wgs84_filtr.crs)
+print(wt_contour_filtr.crs)
 
 
 type(sa_gdf)
-type(wt_contour_wgs84_filtr)
-len(wt_contour_wgs84_filtr) # 1122 rows
+type(wt_contour_filtr)
+len(wt_contour_filtr) # 1122 rows
 
 # Make a copy of the dataframe so I can add the intersection geoseries over the top
-contours_icpt_gdf = wt_contour_wgs84_filtr.copy()
+contours_icpt_gdf = wt_contour_filtr.copy()
 len(contours_icpt_gdf)
 
 # Crop contours based on the study area
-contours_icpt_gdf['contours_icpt'] = wt_contour_wgs84_filtr.intersection(sa_gdf.geometry[0])
+contours_icpt_gdf['contours_icpt'] = wt_contour_filtr.intersection(sa_gdf.geometry[0])
 
 type(contours_icpt_gdf)
 len(contours_icpt_gdf) # 1122 rows
@@ -285,7 +269,7 @@ contours_sa = contours_sa.rename(columns={"contours_icpt":"geometry"})
 fig, ax = plt.subplots()
 contours_sa.plot(ax=ax, color="k", alpha=0.5, linewidth=1)
 
-# Now it is a geopandas opject and is the right shape, cropped to the study area
+# Now it is a geopandas object and is the right shape, cropped to the study area
 
 sa_gdf.plot(ax=ax,color="gold", alpha=0.5)
 
@@ -299,7 +283,7 @@ plt.savefig(os.path.join("figures", "cropped_contours"), dpi=300)
 # Plot DEM with the contours
 
 fig1, ax1 = plt.subplots()
-show(dem_projected, ax=ax1, cmap="terrain", alpha=0.5)
+show(dem_rstr, ax=ax1, cmap="terrain", alpha=0.5)
 contours_sa.plot(ax=ax1, color="k", alpha=0.5, linewidth=1)
 plt.xlabel("Longitude")
 plt.ylabel("Latitude")
@@ -309,9 +293,6 @@ axes_extent = ax1.axis()
 
 plt.savefig(os.path.join("figures", "dem_with_contours"), dpi=300)
 ######################################
-
-
-
 
 #------------------------------------------------------------------------------
 # Turn my water table contours into a raster file
@@ -324,9 +305,9 @@ transform = grid_meta['transform'] # rio.transform.from_bounds(*df['geometry'].t
 # Why has cropping the wt df converted it into a geoseries?
 
 raster_wt = rasterize(
-    ((s, h) for s, h in zip(df['geometry'], df['height'])),
-    out_shape=shape,
-    transform=transform,
+    ((s, h) for s, h in zip(contours_sa['geometry'], contours_sa['height'])),
+    out_shape=dem.shape,
+    transform=grid_meta['transform'],
     fill = 0,
     all_touched = True,
     default_value = 0,
@@ -362,7 +343,7 @@ river_gdf = riv_wgs.to_crs(wgs84)
 # PLot the river network
 
 fig1, ax1 = plt.subplots()
-show(dem_projected, ax=ax1, alpha=0.5)
+show(dem_rstr, ax=ax1, alpha=0.5)
 contours_sa.plot(ax=ax1, color="k", alpha=0.5, linewidth=1)
 river_gdf.plot(ax=ax1, edgecolor='b')
 
@@ -379,11 +360,11 @@ plt.savefig(os.path.join("figures", "dem_riv_contours"), dpi=300)
 # Vectorise river network
 
 # Select major rivers
-inds = river_gdf.hierarchy=='Major'
+river_index = river_gdf.hierarchy=='Major'
 
 # Create features for rasterio
-riv_shp = ((geom,value) for geom, value in zip(river_gdf[inds].geometry, 
-                                               river_gdf[inds].hydroid))
+riv_shp = ((geom,value) for geom, value in zip(river_gdf[river_index].geometry, 
+                                               river_gdf[river_index].hydroid))
 
 # burn in features in raster
 riv_brn = rasterize(shapes=riv_shp, out_shape=dem.shape, fill=0, 
@@ -397,6 +378,9 @@ riv_brn[riv_brn > 0] = 1
 plt.figure()
 plt.imshow(riv_brn, cmap='gist_stern', interpolation=None)
 plt.savefig(os.path.join("figures", "riv_raster"), dpi=300)
+
+#------------------------------------------------------------------------------
+# NOT IN JUPYTER NOTEBOOK --> BELOW
 
 #------------------------------------------------------------------------------
 n_elements = raster_wt.shape[0]*raster_wt.shape[1]
@@ -846,9 +830,12 @@ for wt_raster_idx in range(len(wt_raster_optns)):
     print("Riv min: %2.2f, Water table min: %2.2f " %(np.nanmin(riv_raster), np.nanmin(wt_raster)))
 
 #------------------------------------------------------------------------------
+# NOT IN JUPYTER NOTEBOOK --> ABOVE
+
+#------------------------------------------------------------------------------
+#------------------------------------------------------------------------------
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Watertable elevation RASTER Data --------------------------------------------
-# Import ascii file (because I am having trouble working with tiffs)
 wt_fldr_asc = os.path.join("input_data", "GAB_WT", "Watertable_Elev", "ASCII_Grid")
 wt_rstr_nm_tif = 'wt1.tif'
 
@@ -867,10 +854,8 @@ plt.xlabel("Longitude")
 plt.ylabel("Latitude")
 ###########################################################
 
-
 ### Crop area based on shapefile of my study area
-# FRom Here: https://rasterio.readthedocs.io/en/latest/topics/masking-by-shapefile.html
-import rasterio.mask
+# From Here: https://rasterio.readthedocs.io/en/latest/topics/masking-by-shapefile.html
 
 with rio.open(os.path.join(wt_fldr_asc, wt_rstr_nm_tif)) as src:
     out_image, out_transform = rasterio.mask.mask(src, sa_gdf["geometry"], crop=True)
